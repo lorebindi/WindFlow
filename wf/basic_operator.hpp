@@ -41,6 +41,7 @@
 #include<ff/multinode.hpp>
 #include<basic.hpp>
 #include<basic_emitter.hpp>
+#include<file_log_manager.hpp>
 #if defined (WF_TRACING_ENABLED)
     #include<stats_record.hpp>
     #include<rapidjson/prettywriter.h>
@@ -172,6 +173,12 @@ public:
 #if defined (WF_TRACING_ENABLED)
         stats_record = Stats_Record(opName, std::to_string(context.getReplicaIndex()), isWinOP, isGpuOP);
 #endif
+
+#ifndef NO_DEFAULT_MAPPING
+        // Scrittura sul file di log
+        file_log_manager::getInstance().log(opName, context.getReplicaIndex(), sched_getcpu());
+#endif
+
         last_time_punct = current_time_usecs();
         return 0;
     }

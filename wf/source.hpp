@@ -1,8 +1,8 @@
 /**************************************************************************************
  *  Copyright (c) 2019- Gabriele Mencagli
- *  
+ *
  *  This file is part of WindFlow.
- *  
+ *
  *  WindFlow is free software dual licensed under the GNU LGPL or MIT License.
  *  You can redistribute it and/or modify it under the terms of the
  *    * GNU Lesser General Public License as published by
@@ -10,7 +10,7 @@
  *      (at your option) any later version
  *    OR
  *    * MIT License: https://github.com/ParaGroup/WindFlow/blob/master/LICENSE.MIT
- *  
+ *
  *  WindFlow is distributed in the hope that it will be useful,
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -21,16 +21,16 @@
  **************************************************************************************
  */
 
-/** 
+/**
  *  @file    source.hpp
  *  @author  Gabriele Mencagli
- *  
+ *
  *  @brief Source operator
- *  
+ *
  *  @section Source (Description)
- *  
+ *
  *  This file implements the Source operator able to generate output streams
- */ 
+ */
 
 #ifndef SOURCE_H
 #define SOURCE_H
@@ -165,14 +165,14 @@ public:
 
 //@endcond
 
-/** 
+/**
  *  \class Source
- *  
+ *
  *  \brief Source operator
- *  
+ *
  *  This class implements the Source operator able to generate a stream of outputs
  *  all having the same type.
- */ 
+ */
 template<typename source_func_t>
 class Source: public Basic_Operator
 {
@@ -196,10 +196,10 @@ private:
         replicas[0]->setEmitter(_emitter);
         for (size_t i=1; i<replicas.size(); i++) {
             replicas[i]->setEmitter(_emitter->clone());
-        }   
+        }
     }
 
-    // Check whether the Source has terminated 
+    // Check whether the Source has terminated
     bool isTerminated() const override
     {
         bool terminated = true;
@@ -254,15 +254,15 @@ private:
 #endif
 
 public:
-    /** 
+    /**
      *  \brief Constructor
-     *  
+     *
      *  \param _func functional logic of the Source (a function or any callable type)
      *  \param _parallelism internal parallelism of the Source
      *  \param _name name of the Source
      *  \param _outputBatchSize size (in num of tuples) of the batches produced by this operator (0 for no batching)
      *  \param _closing_func closing functional logic of the Source (a function or any callable type)
-     */ 
+     */
     Source(source_func_t _func,
            size_t _parallelism,
            std::string _name,
@@ -294,10 +294,10 @@ public:
         }
     }
 
-    /** 
+    /**
      *  \brief Get the type of the Source as a string
      *  \return type of the Source
-     */ 
+     */
     std::string getType() const override
     {
         return std::string("Source");
