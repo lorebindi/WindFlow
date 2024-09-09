@@ -1,0 +1,8 @@
+# Ignora la directory .idea all'interno di wf
+wf/.idea/
+
+# Ignora il file CMakeLists.txt all'interno di wf
+wf/CMakeLists.txt
+
+# Ignora la directory cmake-build-debug all'interno di wf
+wf/cmake-build-debug/
