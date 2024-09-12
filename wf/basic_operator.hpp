@@ -174,10 +174,10 @@ public:
         stats_record = Stats_Record(opName, std::to_string(context.getReplicaIndex()), isWinOP, isGpuOP);
 #endif
 
-#ifndef NO_DEFAULT_MAPPING
+//#ifndef NO_DEFAULT_MAPPING
         // Scrittura sul file di log
         file_log_manager::getInstance().log(opName, context.getReplicaIndex(), sched_getcpu());
-#endif
+//#endif
 
         last_time_punct = current_time_usecs();
         return 0;

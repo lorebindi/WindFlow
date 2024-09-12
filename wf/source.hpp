@@ -45,6 +45,9 @@
 #endif
 #include<basic_emitter.hpp>
 #include<basic_operator.hpp>
+#include <ff/barrier.hpp>
+
+using namespace ff;
 
 namespace wf {
 
@@ -61,10 +64,11 @@ private:
     static constexpr bool isNonRiched = std::is_invocable<decltype(func), Source_Shipper<result_t> &>::value;
     static constexpr bool isRiched = std::is_invocable<decltype(func), Source_Shipper<result_t> &, RuntimeContext &>::value;
     // check the presence of a valid functional logic
-    static_assert(isNonRiched || isRiched,
-        "WindFlow Compilation Error - Source_Replica does not have a valid functional logic:\n");
+    static_assert(isNonRiched || isRiched, "WindFlow Compilation Error - Source_Replica does not have a valid functional logic:\n");
     Time_Policy_t time_policy; // time policy of the Source replica
     Source_Shipper<result_t> *shipper; // pointer to the shipper object used by the Source replica to send outputs
+    PinningSpinBarrier* barrier;
+    bool has_barrier = false;
 
 public:
     // Constructor
@@ -74,14 +78,31 @@ public:
                    std::function<void(RuntimeContext &)> _closing_func):
                    Basic_Replica(_opName, _context, _closing_func, false),
                    func(_func),
+                   barrier(nullptr),
                    time_policy(Time_Policy_t::INGRESS_TIME),
-                   shipper(nullptr) {}
+                   shipper(nullptr) {    }
+
+    // Constructor
+    Source_Replica(source_func_t _func,
+                   std::string _opName,
+                   RuntimeContext _context,
+                   PinningSpinBarrier* _barrier,
+                   bool _has_barrier,
+                   std::function<void(RuntimeContext &)> _closing_func):
+                   Basic_Replica(_opName, _context, _closing_func, false),
+                   func(_func),
+                   barrier(_barrier),
+                   has_barrier(_has_barrier),
+                   time_policy(Time_Policy_t::INGRESS_TIME),
+                   shipper(nullptr) {    }
 
     // Copy Constructor
     Source_Replica(const Source_Replica &_other):
                    Basic_Replica(_other),
                    func(_other.func),
-                   time_policy(_other.time_policy)
+                   time_policy(_other.time_policy),
+                   barrier(_other.barrier),
+                   has_barrier(_other.has_barrier)
     {
         if (_other.shipper != nullptr) {
             shipper = new Source_Shipper<result_t>(*(_other.shipper));
@@ -106,6 +127,17 @@ public:
     // svc_init (utilized by the FastFlow runtime)
     int svc_init() override
     {
+        //pinning
+        if(context.getReplicaIndex()==0)
+            ff_mapThreadToCpu(5);
+        if(context.getReplicaIndex()==1)
+            ff_mapThreadToCpu(21);
+        if(context.getReplicaIndex()==1)
+            ff_mapThreadToCpu(37);
+        // Call the barrier if set
+        if (this->get_has_barrier()) {
+            barrier->doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+        }
         shipper->setInitialTime(current_time_usecs()); // set the initial time
         return Basic_Replica::svc_init();
     }
@@ -158,6 +190,11 @@ public:
         }
     }
 
+    bool get_has_barrier() {
+        return has_barrier;
+    }
+
+
     Source_Replica(Source_Replica &&) = delete; ///< Move constructor is deleted
     Source_Replica &operator=(const Source_Replica &) = delete; ///< Copy assignment operator is deleted
     Source_Replica &operator=(Source_Replica &&) = delete; ///< Move assignment operator is deleted
@@ -183,6 +220,7 @@ private:
     using result_t = decltype(get_result_t_Source(func)); // extracting the result_t type and checking the admissible signatures
     std::vector<Source_Replica<source_func_t>*> replicas; // vector of pointers to the replicas of the Source
     static constexpr op_type_t op_type = op_type_t::SOURCE;
+    PinningSpinBarrier* barrier;
 
     // Configure the Source to receive batches instead of individual inputs (cannot be called for the Source)
     void receiveBatches(bool _input_batching) override
@@ -269,17 +307,44 @@ public:
            size_t _outputBatchSize,
            std::function<void(RuntimeContext &)> _closing_func):
            Basic_Operator(_parallelism, _name, Routing_Mode_t::NONE /* fixed to NONE for the Source */, _outputBatchSize),
-           func(_func)
+           func(_func),
+           barrier(nullptr)
     {
         for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Source
             replicas.push_back(new Source_Replica<source_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _closing_func));
         }
     }
 
+    /**
+     *
+    *   \param _func functional logic of the Source (a function or any callable type)
+     *  \param _parallelism internal parallelism of the Source
+     *  \param _name name of the Source
+     *  \param _outputBatchSize size (in num of tuples) of the batches produced by this operator (0 for no batching)
+     *  \param _barrier spinBarrier used from Source_Replica, required for pinning
+     *  \param _closing_func closing functional logic of the Source (a function or any callable type)
+     */
+    Source(source_func_t _func,
+           size_t _parallelism,
+           std::string _name,
+           size_t _outputBatchSize,
+           PinningSpinBarrier* _barrier,
+           std::function<void(RuntimeContext &)> _closing_func):
+           Basic_Operator(_parallelism, _name, Routing_Mode_t::NONE /* fixed to NONE for the Source */, _outputBatchSize),
+           func(_func),
+           barrier(_barrier)
+    {
+        for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Source
+            auto replica =  new Source_Replica<source_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier, true, _closing_func);
+            replicas.push_back(replica);
+        }
+    }
+
     /// Copy constructor
     Source(const Source &_other):
            Basic_Operator(_other),
-           func(_other.func)
+           func(_other.func),
+           barrier(_other.barrier)
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Source replicas
             replicas.push_back(new Source_Replica<source_func_t>(*(_other.replicas[i])));
@@ -302,6 +367,8 @@ public:
     {
         return std::string("Source");
     }
+
+
 
     Source(Source &&) = delete; ///< Move constructor is deleted
     Source &operator=(const Source &) = delete; ///< Copy assignment operator is deleted

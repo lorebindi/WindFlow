@@ -44,6 +44,8 @@
 #endif
 #include<basic.hpp>
 
+using namespace ff;
+
 namespace wf {
 
 /** 
@@ -137,6 +139,9 @@ class Source_Builder: public Basic_Builder<Source_Builder, source_func_t, key_t>
 private:
     source_func_t func; // functional logic of the Source
     using result_t = decltype(get_result_t_Source(func)); // extracting the result_t type and checking the admissible signatures
+    PinningSpinBarrier* barrier_;
+    bool has_barrier = false;
+
     // static assert to check the signature of the Source functional logic
     static_assert(!(std::is_same<result_t, std::false_type>::value),
         "WindFlow Compilation Error - unknown signature passed to the Source_Builder:\n"
@@ -152,9 +157,14 @@ public:
      *  \brief Constructor
      *  
      *  \param _func functional logic of the Source (a function or any callable type)
-     */ 
+     */
     Source_Builder(source_func_t _func):
-                   func(_func) {}
+                   func(_func) {   }
+
+    Source_Builder(source_func_t _func, PinningSpinBarrier* _barrier):
+                   func(_func), barrier_(_barrier) {
+        has_barrier = true;
+    }
 
     /** 
      *  \brief Create the Source
@@ -163,6 +173,14 @@ public:
      */ 
     auto build()
     {
+        if(has_barrier) {
+            return source_t(func,
+                        this->parallelism,
+                        this->name,
+                        this->outputBatchSize,
+                        this->barrier_,
+                        this->closing_func);
+        }
         return source_t(func,
                         this->parallelism,
                         this->name,
