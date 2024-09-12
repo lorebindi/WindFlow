@@ -139,7 +139,7 @@ class Source_Builder: public Basic_Builder<Source_Builder, source_func_t, key_t>
 private:
     source_func_t func; // functional logic of the Source
     using result_t = decltype(get_result_t_Source(func)); // extracting the result_t type and checking the admissible signatures
-    PinningSpinBarrier* barrier_;
+    PinningSpinBarrier* barrier_ ;
     bool has_barrier = false;
 
     // static assert to check the signature of the Source functional logic
@@ -162,9 +162,7 @@ public:
                    func(_func) {   }
 
     Source_Builder(source_func_t _func, PinningSpinBarrier* _barrier):
-                   func(_func), barrier_(_barrier) {
-        has_barrier = true;
-    }
+                   func(_func), barrier_(_barrier), has_barrier(true) {    }
 
     /** 
      *  \brief Create the Source
@@ -216,6 +214,11 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Filter
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
+    PinningSpinBarrier* barrier_;
+    bool has_barrier = false;
+
+
+
 public:
     /** 
      *  \brief Constructor
@@ -224,6 +227,11 @@ public:
      */ 
     Filter_Builder(filter_func_t _func):
                    func(_func) {}
+
+
+    Filter_Builder(filter_func_t _func, PinningSpinBarrier* _barrier):
+                   func(_func), barrier_(_barrier), has_barrier(true) {}
+
 
     /** 
      *  \brief Set the KEYBY routing mode of inputs to the Filter
@@ -259,6 +267,12 @@ public:
         new_builder.key_extr = _key_extr;
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
+
+        new_builder.has_barrier = this->has_barrier;
+        if(this->has_barrier) {
+            new_builder.barrier_ = this->barrier_;
+        }
+
         return new_builder;
     }
 
@@ -300,6 +314,16 @@ public:
      */ 
     auto build()
     {
+        if(has_barrier) {
+            return filter_t(func,
+                     key_extr,
+                     this->parallelism,
+                     this->name,
+                     input_routing_mode,
+                     this->outputBatchSize,
+                     this->barrier_,
+                     this->closing_func);
+        }
         return filter_t(func,
                         key_extr,
                         this->parallelism,
@@ -343,6 +367,10 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Map
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
+    PinningSpinBarrier* barrier_;
+    bool has_barrier = false;
+
+
 public:
     /** 
      *  \brief Constructor
@@ -351,6 +379,16 @@ public:
      */ 
     Map_Builder(map_func_t _func):
                 func(_func) {}
+
+
+    /**
+     *
+     * \param _func functional logic of the Map (a function or any callable type)
+     * \param _barrier PinningSpinBarrier required for pinning of all the replicas
+     */
+    Map_Builder(map_func_t _func, PinningSpinBarrier* _barrier):
+            func(_func), barrier_(_barrier), has_barrier(true) { }
+
 
     /** 
      *  \brief Set the KEYBY routing mode of inputs to the Map
@@ -386,6 +424,12 @@ public:
         new_builder.key_extr = _key_extr;
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
+
+        new_builder.has_barrier = this->has_barrier;
+        if(this->has_barrier) {
+            new_builder.barrier_ = this->barrier_;
+        }
+
         return new_builder;
     }
 
@@ -427,13 +471,25 @@ public:
      */ 
     auto build()
     {
-        return map_t(func,
+
+        if(has_barrier) {
+            return map_t(func,
                      key_extr,
                      this->parallelism,
                      this->name,
                      input_routing_mode,
                      this->outputBatchSize,
+                     this->barrier_,
                      this->closing_func);
+        }
+
+        return map_t(func,
+                 key_extr,
+                 this->parallelism,
+                 this->name,
+                 input_routing_mode,
+                 this->outputBatchSize,
+                 this->closing_func);
     }
 };
 
@@ -1433,6 +1489,10 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Sink
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
+    PinningSpinBarrier* barrier_;
+    bool has_barrier = false;
+
+
 public:
     /** 
      *  \brief Constructor
@@ -1441,6 +1501,11 @@ public:
      */ 
     Sink_Builder(sink_func_t _func):
                  func(_func) {}
+
+
+    Sink_Builder(sink_func_t _func, PinningSpinBarrier* _barrier):
+                 func(_func), barrier_(_barrier), has_barrier(true) {}
+
 
     /** 
      *  \brief Set the KEYBY routing mode of inputs to the Sink
@@ -1475,6 +1540,12 @@ public:
         new_builder.input_routing_mode = Routing_Mode_t::KEYBY;
         new_builder.key_extr = _key_extr;
         new_builder.closing_func = this->closing_func;
+
+        new_builder.has_barrier = this->has_barrier;
+        if(this->has_barrier) {
+            new_builder.barrier_ = this->barrier_;
+        }
+
         return new_builder;
     }
 
@@ -1519,6 +1590,17 @@ public:
      */ 
     auto build()
     {
+
+        if(has_barrier) {
+            return sink_t(func,
+                          key_extr,
+                          this->parallelism,
+                          this->name,
+                          input_routing_mode,
+                          this->barrier_,
+                          this->closing_func);
+        }
+
         return sink_t(func,
                       key_extr,
                       this->parallelism,

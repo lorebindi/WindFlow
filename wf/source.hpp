@@ -67,8 +67,10 @@ private:
     static_assert(isNonRiched || isRiched, "WindFlow Compilation Error - Source_Replica does not have a valid functional logic:\n");
     Time_Policy_t time_policy; // time policy of the Source replica
     Source_Shipper<result_t> *shipper; // pointer to the shipper object used by the Source replica to send outputs
-    PinningSpinBarrier* barrier;
+
+    PinningSpinBarrier* barrier; // PinningSpinBarrier, required ONLY for replicas pinning.
     bool has_barrier = false;
+
 
 public:
     // Constructor
@@ -78,31 +80,32 @@ public:
                    std::function<void(RuntimeContext &)> _closing_func):
                    Basic_Replica(_opName, _context, _closing_func, false),
                    func(_func),
-                   barrier(nullptr),
                    time_policy(Time_Policy_t::INGRESS_TIME),
                    shipper(nullptr) {    }
 
-    // Constructor
+    // Constructor used for pinning
     Source_Replica(source_func_t _func,
                    std::string _opName,
                    RuntimeContext _context,
                    PinningSpinBarrier* _barrier,
-                   bool _has_barrier,
                    std::function<void(RuntimeContext &)> _closing_func):
                    Basic_Replica(_opName, _context, _closing_func, false),
                    func(_func),
                    barrier(_barrier),
-                   has_barrier(_has_barrier),
+                   has_barrier(true),
                    time_policy(Time_Policy_t::INGRESS_TIME),
                    shipper(nullptr) {    }
+
 
     // Copy Constructor
     Source_Replica(const Source_Replica &_other):
                    Basic_Replica(_other),
                    func(_other.func),
-                   time_policy(_other.time_policy),
-                   barrier(_other.barrier),
+                   time_policy(_other.time_policy)
+
+                   , barrier(_other.barrier),
                    has_barrier(_other.has_barrier)
+
     {
         if (_other.shipper != nullptr) {
             shipper = new Source_Shipper<result_t>(*(_other.shipper));
@@ -127,17 +130,31 @@ public:
     // svc_init (utilized by the FastFlow runtime)
     int svc_init() override
     {
+
         //pinning
         if(context.getReplicaIndex()==0)
             ff_mapThreadToCpu(5);
         if(context.getReplicaIndex()==1)
             ff_mapThreadToCpu(21);
-        if(context.getReplicaIndex()==1)
+        if(context.getReplicaIndex()==2)
             ff_mapThreadToCpu(37);
         // Call the barrier if set
-        if (this->get_has_barrier()) {
+        if (this->has_pinning_barrier()) {
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) è in attesa sulla barriera" << endl;*/
             barrier->doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) ha superato la barriera" << endl;*/
         }
+
         shipper->setInitialTime(current_time_usecs()); // set the initial time
         return Basic_Replica::svc_init();
     }
@@ -190,7 +207,8 @@ public:
         }
     }
 
-    bool get_has_barrier() {
+
+    bool has_pinning_barrier() {
         return has_barrier;
     }
 
@@ -220,7 +238,9 @@ private:
     using result_t = decltype(get_result_t_Source(func)); // extracting the result_t type and checking the admissible signatures
     std::vector<Source_Replica<source_func_t>*> replicas; // vector of pointers to the replicas of the Source
     static constexpr op_type_t op_type = op_type_t::SOURCE;
-    PinningSpinBarrier* barrier;
+
+    PinningSpinBarrier* barrier; // barrier required ONLY for the pinning of all replicas
+
 
     // Configure the Source to receive batches instead of individual inputs (cannot be called for the Source)
     void receiveBatches(bool _input_batching) override
@@ -307,13 +327,13 @@ public:
            size_t _outputBatchSize,
            std::function<void(RuntimeContext &)> _closing_func):
            Basic_Operator(_parallelism, _name, Routing_Mode_t::NONE /* fixed to NONE for the Source */, _outputBatchSize),
-           func(_func),
-           barrier(nullptr)
+           func(_func)
     {
         for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Source
             replicas.push_back(new Source_Replica<source_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _closing_func));
         }
     }
+
 
     /**
      *
@@ -321,7 +341,7 @@ public:
      *  \param _parallelism internal parallelism of the Source
      *  \param _name name of the Source
      *  \param _outputBatchSize size (in num of tuples) of the batches produced by this operator (0 for no batching)
-     *  \param _barrier spinBarrier used from Source_Replica, required for pinning
+     *  \param _barrier used from Source_Replica, ONLY required for pinning
      *  \param _closing_func closing functional logic of the Source (a function or any callable type)
      */
     Source(source_func_t _func,
@@ -335,16 +355,19 @@ public:
            barrier(_barrier)
     {
         for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Source
-            auto replica =  new Source_Replica<source_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier, true, _closing_func);
-            replicas.push_back(replica);
+            replicas.push_back(new Source_Replica<source_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier, _closing_func));
         }
     }
+
+
 
     /// Copy constructor
     Source(const Source &_other):
            Basic_Operator(_other),
-           func(_other.func),
-           barrier(_other.barrier)
+           func(_other.func)
+
+           , barrier(_other.barrier)
+
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Source replicas
             replicas.push_back(new Source_Replica<source_func_t>(*(_other.replicas[i])));

@@ -71,6 +71,10 @@ private:
         "WindFlow Compilation Error - Map_Replica does not have a valid functional logic:\n");
     bool copyOnWrite; // flag stating if a copy of each input must be done in case of in-place semantics
 
+    PinningSpinBarrier* barrier; // PinningSpinBarrier, required ONLY for replicas pinning.
+    bool has_barrier = false;
+
+
 public:
     // Constructor
     Map_Replica(map_func_t _func,
@@ -82,11 +86,62 @@ public:
                 func(_func),
                 copyOnWrite(_copyOnWrite) {}
 
+
+    // Constructor used for pinning
+    Map_Replica(map_func_t _func,
+                std::string _opName,
+                RuntimeContext _context,
+                PinningSpinBarrier* _barrier,
+                std::function<void(RuntimeContext &)> _closing_func,
+                bool _copyOnWrite):
+                Basic_Replica(_opName, _context, _closing_func, false),
+                func(_func),
+                barrier(_barrier),
+                has_barrier(true),
+                copyOnWrite(_copyOnWrite) {}
+
+
     // Copy Constructor
     Map_Replica(const Map_Replica &_other):
                 Basic_Replica(_other),
                 func(_other.func),
-                copyOnWrite(_other.copyOnWrite) {}
+                copyOnWrite(_other.copyOnWrite)
+
+                , barrier(_other.barrier)
+                , has_barrier(_other.has_barrier)
+
+    {  }
+
+    // svc_init (utilized by the FastFlow runtime)
+    int svc_init() override
+    {
+
+        //pinning
+        if(context.getReplicaIndex()==0)
+            ff_mapThreadToCpu(7);
+        if(context.getReplicaIndex()==1)
+            ff_mapThreadToCpu(23);
+        if(context.getReplicaIndex()==2)
+            ff_mapThreadToCpu(39);
+        // Call the barrier if set
+        if (this->has_pinning_barrier()) {
+            /*if(context.getReplicaIndex()==0)
+                cout<< "map(0) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "map(1) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "map(2) è in attesa sulla barriera" << endl;*/
+            barrier->doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            /*if(context.getReplicaIndex()==0)
+                cout<< "map(0) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "map(1) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "map(2) ha superato la barriera" << endl;*/
+        }
+
+        return Basic_Replica::svc_init();
+    }
 
     // svc (utilized by the FastFlow runtime)
     void *svc(void *_in) override
@@ -209,6 +264,12 @@ public:
         }
     }
 
+
+    bool has_pinning_barrier() {
+        return has_barrier;
+    }
+
+
     Map_Replica(Map_Replica &&) = delete; ///< Move constructor is deleted
     Map_Replica &operator=(const Map_Replica &) = delete; ///< Copy assignment operator is deleted
     Map_Replica &operator=(Map_Replica &&) = delete; ///< Move assignment operator is deleted
@@ -236,6 +297,8 @@ private:
     using result_t = decltype(get_result_t_Map(func)); // extracting the result_t type and checking the admissible signatures
     std::vector<Map_Replica<map_func_t>*> replicas; // vector of pointers to the replicas of the Map
     static constexpr op_type_t op_type = op_type_t::BASIC;
+
+    PinningSpinBarrier* barrier; // barrier required ONLY for the pinning of all replicas
 
     // Configure the Map to receive batches instead of individual inputs
     void receiveBatches(bool _input_batching) override
@@ -351,11 +414,48 @@ public:
         }
     }
 
+
+    /**
+     *
+    *  \brief Constructor for pinning
+     *
+     *  \param _func functional logic of the Map (a function or any callable type)
+     *  \param _key_extr key extractor (a function or any callable type)
+     *  \param _parallelism internal parallelism of the Map
+     *  \param _name name of the Map
+     *  \param _input_routing_mode input routing mode of the Map
+     *  \param _outputBatchSize size (in num of tuples) of the batches produced by this operator (0 for no batching)
+     *  \param _barrier PinningSpinBarrier required for map replicas pinnig.
+     *  \param _closing_func closing functional logic of the Map (a function or any callable type)
+     */
+    Map(map_func_t _func,
+        keyextr_func_t _key_extr,
+        size_t _parallelism,
+        std::string _name,
+        Routing_Mode_t _input_routing_mode,
+        size_t _outputBatchSize,
+        PinningSpinBarrier* _barrier,
+        std::function<void(RuntimeContext &)> _closing_func):
+        Basic_Operator(_parallelism, _name, _input_routing_mode, _outputBatchSize),
+        func(_func),
+        key_extr(_key_extr),
+        barrier(_barrier)
+    {
+        bool copyOnWrite = (this->input_routing_mode == Routing_Mode_t::BROADCAST);
+        for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Map
+            replicas.push_back(new Map_Replica<map_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier,_closing_func, copyOnWrite));
+        }
+    }
+
+
     /// Copy constructor
     Map(const Map &_other):
         Basic_Operator(_other),
-        func(_other.func),
-        key_extr(_other.key_extr)
+        func(_other.func)
+
+        , barrier(_other.barrier)
+        , key_extr(_other.key_extr)
+
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Map replicas
             replicas.push_back(new Map_Replica<map_func_t>(*(_other.replicas[i])));

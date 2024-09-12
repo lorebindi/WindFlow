@@ -67,6 +67,10 @@ private:
         "WindFlow Compilation Error - Filter_Replica does not have a valid functional logic:\n");
     bool copyOnWrite; // flag stating if a copy of each input must be done in case of in-place semantics
 
+    PinningSpinBarrier* barrier; // PinningSpinBarrier, required ONLY for replicas pinning.
+    bool has_barrier = false;
+
+
 public:
     // Constructor
     Filter_Replica(filter_func_t _func,
@@ -76,13 +80,64 @@ public:
                    bool _copyOnWrite):
                    Basic_Replica(_opName, _context, _closing_func, false),
                    func(_func),
-                   copyOnWrite(_copyOnWrite) {}
+                   copyOnWrite(_copyOnWrite){}
+
+
+    // Constructor used for pinning
+    Filter_Replica(filter_func_t _func,
+                   std::string _opName,
+                   RuntimeContext _context,
+                   PinningSpinBarrier* _barrier,
+                   std::function<void(RuntimeContext &)> _closing_func,
+                   bool _copyOnWrite):
+                   Basic_Replica(_opName, _context, _closing_func, false),
+                   func(_func),
+                   copyOnWrite(_copyOnWrite),
+                   barrier(_barrier),
+                   has_barrier(true){}
+
 
     // Copy Constructor
     Filter_Replica(const Filter_Replica &_other):
                    Basic_Replica(_other),
                    func(_other.func),
-                   copyOnWrite(_other.copyOnWrite) {}
+                   copyOnWrite(_other.copyOnWrite)
+
+                   , barrier(_other.barrier)
+                   , has_barrier(_other.has_barrier)
+
+    {  }
+
+    // svc_init (utilized by the FastFlow runtime)
+    int svc_init() override
+    {
+
+        //pinning
+        if(context.getReplicaIndex()==0)
+            ff_mapThreadToCpu(0);
+        if(context.getReplicaIndex()==1)
+            ff_mapThreadToCpu(16);
+        if(context.getReplicaIndex()==2)
+            ff_mapThreadToCpu(32);
+        // Call the barrier if set
+        if (this->has_pinning_barrier()) {
+            /*if(context.getReplicaIndex()==0)
+                cout<< "filter(0) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "filter(1) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "filter(2) è in attesa sulla barriera" << endl;*/
+            barrier->doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            /*if(context.getReplicaIndex()==0)
+                cout<< "filter(0) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "filter(1) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "filter(2) ha superato la barriera" << endl;*/
+        }
+
+        return Basic_Replica::svc_init();
+    }
 
     // svc (utilized by the FastFlow runtime)
     void *svc(void *_in) override
@@ -226,6 +281,12 @@ public:
         }
     }
 
+
+    bool has_pinning_barrier() {
+        return has_barrier;
+    }
+
+
     Filter_Replica(Filter_Replica &&) = delete; ///< Move constructor is deleted
     Filter_Replica &operator=(const Filter_Replica &) = delete; ///< Copy assignment operator is deleted
     Filter_Replica &operator=(Filter_Replica &&) = delete; ///< Move assignment operator is deleted
@@ -253,6 +314,9 @@ private:
     using result_t = tuple_t;
     std::vector<Filter_Replica<filter_func_t>*> replicas; // vector of pointers to the replicas of the Filter
     static constexpr op_type_t op_type = op_type_t::BASIC;
+
+    PinningSpinBarrier* barrier; // barrier required ONLY for the pinning of all replicas
+
 
     // Configure the Filter to receive batches instead of individual inputs
     void receiveBatches(bool _input_batching) override
@@ -368,11 +432,37 @@ public:
         }
     }
 
+
+    // Pinning Constructor
+    Filter(filter_func_t _func,
+           keyextr_func_t _key_extr,
+           size_t _parallelism,
+           std::string _name,
+           Routing_Mode_t _input_routing_mode,
+           size_t _outputBatchSize,
+           PinningSpinBarrier* _barrier,
+           std::function<void(RuntimeContext &)> _closing_func):
+           Basic_Operator(_parallelism, _name, _input_routing_mode, _outputBatchSize),
+           func(_func),
+           key_extr(_key_extr),
+           barrier(_barrier)
+    {
+        bool copyOnWrite = (this->input_routing_mode == Routing_Mode_t::BROADCAST);
+        for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Filter
+            replicas.push_back(new Filter_Replica<filter_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier,_closing_func, copyOnWrite));
+        }
+    }
+
+
     /// Copy constructor
     Filter(const Filter &_other):
            Basic_Operator(_other),
            func(_other.func),
            key_extr(_other.key_extr)
+
+           , barrier(_other.barrier)
+
+
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Filter replicas
             replicas.push_back(new Filter_Replica<filter_func_t>(*(_other.replicas[i])));
