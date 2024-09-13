@@ -113,7 +113,7 @@ public:
     // svc_init (utilized by the FastFlow runtime)
     int svc_init() override
     {
-
+#ifdef MANUAL_PINNING
         //pinning
         if(context.getReplicaIndex()==0)
             ff_mapThreadToCpu(8);
@@ -137,7 +137,7 @@ public:
             if(context.getReplicaIndex()==2)
                 cout<< "sink(2) ha superato la barriera" << endl;*/
         }
-
+#endif
         return Basic_Replica::svc_init();
     }
 

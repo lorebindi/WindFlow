@@ -130,7 +130,7 @@ public:
     // svc_init (utilized by the FastFlow runtime)
     int svc_init() override
     {
-
+#ifdef MANUAL_PINNING
         //pinning
         if(context.getReplicaIndex()==0)
             ff_mapThreadToCpu(5);
@@ -154,7 +154,7 @@ public:
             if(context.getReplicaIndex()==2)
                 cout<< "source(2) ha superato la barriera" << endl;*/
         }
-
+#endif
         shipper->setInitialTime(current_time_usecs()); // set the initial time
         return Basic_Replica::svc_init();
     }
