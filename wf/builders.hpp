@@ -43,6 +43,7 @@
     #include<meta_gpu.hpp>
 #endif
 #include<basic.hpp>
+#include<pinning_thread_context.hpp>
 
 using namespace ff;
 
@@ -139,8 +140,7 @@ class Source_Builder: public Basic_Builder<Source_Builder, source_func_t, key_t>
 private:
     source_func_t func; // functional logic of the Source
     using result_t = decltype(get_result_t_Source(func)); // extracting the result_t type and checking the admissible signatures
-    PinningSpinBarrier* barrier_ ;
-    bool has_barrier = false;
+    pinning_thread_context *pinning_context = nullptr;
 
     // static assert to check the signature of the Source functional logic
     static_assert(!(std::is_same<result_t, std::false_type>::value),
@@ -161,8 +161,8 @@ public:
     Source_Builder(source_func_t _func):
                    func(_func) {   }
 
-    Source_Builder(source_func_t _func, PinningSpinBarrier* _barrier):
-                   func(_func), barrier_(_barrier), has_barrier(true) {    }
+    Source_Builder(source_func_t _func, pinning_thread_context* _pinning_context):
+                   func(_func), pinning_context(_pinning_context)  {    }
 
     /** 
      *  \brief Create the Source
@@ -171,12 +171,12 @@ public:
      */ 
     auto build()
     {
-        if(has_barrier) {
+        if(pinning_context != nullptr) {
             return source_t(func,
                         this->parallelism,
                         this->name,
                         this->outputBatchSize,
-                        this->barrier_,
+                        this->pinning_context,
                         this->closing_func);
         }
         return source_t(func,
@@ -214,8 +214,7 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Filter
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
-    PinningSpinBarrier* barrier_;
-    bool has_barrier = false;
+    pinning_thread_context *pinning_context = nullptr;
 
 
 
@@ -229,8 +228,8 @@ public:
                    func(_func) {}
 
 
-    Filter_Builder(filter_func_t _func, PinningSpinBarrier* _barrier):
-                   func(_func), barrier_(_barrier), has_barrier(true) {}
+    Filter_Builder(filter_func_t _func, pinning_thread_context* _pinning_context):
+                   func(_func), pinning_context(_pinning_context) {}
 
 
     /** 
@@ -268,9 +267,8 @@ public:
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
 
-        new_builder.has_barrier = this->has_barrier;
-        if(this->has_barrier) {
-            new_builder.barrier_ = this->barrier_;
+        if(this->pinning_context != nullptr) {
+            new_builder.pinning_context = this->pinning_context;
         }
 
         return new_builder;
@@ -314,14 +312,14 @@ public:
      */ 
     auto build()
     {
-        if(has_barrier) {
+        if(pinning_context != nullptr) {
             return filter_t(func,
                      key_extr,
                      this->parallelism,
                      this->name,
                      input_routing_mode,
                      this->outputBatchSize,
-                     this->barrier_,
+                     this->pinning_context,
                      this->closing_func);
         }
         return filter_t(func,
@@ -367,8 +365,7 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Map
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
-    PinningSpinBarrier* barrier_;
-    bool has_barrier = false;
+    pinning_thread_context *pinning_context = nullptr;
 
 
 public:
@@ -386,8 +383,8 @@ public:
      * \param _func functional logic of the Map (a function or any callable type)
      * \param _barrier PinningSpinBarrier required for pinning of all the replicas
      */
-    Map_Builder(map_func_t _func, PinningSpinBarrier* _barrier):
-            func(_func), barrier_(_barrier), has_barrier(true) { }
+    Map_Builder(map_func_t _func, pinning_thread_context* _pinning_context):
+            func(_func), pinning_context(_pinning_context) { }
 
 
     /** 
@@ -425,9 +422,8 @@ public:
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
 
-        new_builder.has_barrier = this->has_barrier;
-        if(this->has_barrier) {
-            new_builder.barrier_ = this->barrier_;
+        if(this->pinning_context != nullptr) {
+            new_builder.pinning_context = this->pinning_context;
         }
 
         return new_builder;
@@ -472,14 +468,14 @@ public:
     auto build()
     {
 
-        if(has_barrier) {
+        if(this->pinning_context != nullptr) {
             return map_t(func,
                      key_extr,
                      this->parallelism,
                      this->name,
                      input_routing_mode,
                      this->outputBatchSize,
-                     this->barrier_,
+                     this->pinning_context,
                      this->closing_func);
         }
 
@@ -1489,8 +1485,7 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the Sink
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
-    PinningSpinBarrier* barrier_;
-    bool has_barrier = false;
+    pinning_thread_context* pinning_context = nullptr;
 
 
 public:
@@ -1503,8 +1498,8 @@ public:
                  func(_func) {}
 
 
-    Sink_Builder(sink_func_t _func, PinningSpinBarrier* _barrier):
-                 func(_func), barrier_(_barrier), has_barrier(true) {}
+    Sink_Builder(sink_func_t _func, pinning_thread_context* _pinning_context):
+                 func(_func), pinning_context(_pinning_context) {}
 
 
     /** 
@@ -1541,9 +1536,8 @@ public:
         new_builder.key_extr = _key_extr;
         new_builder.closing_func = this->closing_func;
 
-        new_builder.has_barrier = this->has_barrier;
-        if(this->has_barrier) {
-            new_builder.barrier_ = this->barrier_;
+        if(this->pinning_context != nullptr) {
+            new_builder.pinning_context = this->pinning_context;
         }
 
         return new_builder;
@@ -1591,13 +1585,13 @@ public:
     auto build()
     {
 
-        if(has_barrier) {
+        if(this->pinning_context != nullptr) {
             return sink_t(func,
                           key_extr,
                           this->parallelism,
                           this->name,
                           input_routing_mode,
-                          this->barrier_,
+                          this->pinning_context,
                           this->closing_func);
         }
 

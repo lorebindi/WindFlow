@@ -46,7 +46,7 @@
     #include<stats_record.hpp>
 #endif
 #include<basic_emitter.hpp>
-#include<basic_operator.hpp>
+#include<pinning_thread_context.hpp>
 
 namespace wf {
 
@@ -71,8 +71,7 @@ private:
         "WindFlow Compilation Error - Map_Replica does not have a valid functional logic:\n");
     bool copyOnWrite; // flag stating if a copy of each input must be done in case of in-place semantics
 
-    PinningSpinBarrier* barrier; // PinningSpinBarrier, required ONLY for replicas pinning.
-    bool has_barrier = false;
+    pinning_thread_context* pinning_context = nullptr;
 
 
 public:
@@ -91,13 +90,12 @@ public:
     Map_Replica(map_func_t _func,
                 std::string _opName,
                 RuntimeContext _context,
-                PinningSpinBarrier* _barrier,
+                pinning_thread_context* _pinning_context,
                 std::function<void(RuntimeContext &)> _closing_func,
                 bool _copyOnWrite):
                 Basic_Replica(_opName, _context, _closing_func, false),
                 func(_func),
-                barrier(_barrier),
-                has_barrier(true),
+                pinning_context(_pinning_context),
                 copyOnWrite(_copyOnWrite) {}
 
 
@@ -105,10 +103,8 @@ public:
     Map_Replica(const Map_Replica &_other):
                 Basic_Replica(_other),
                 func(_other.func),
-                copyOnWrite(_other.copyOnWrite)
-
-                , barrier(_other.barrier)
-                , has_barrier(_other.has_barrier)
+                copyOnWrite(_other.copyOnWrite),
+                pinning_context(_other.pinning_context)
 
     {  }
 
@@ -117,21 +113,17 @@ public:
     {
 #ifdef MANUAL_PINNING
         //pinning
-        if(context.getReplicaIndex()==0)
-            ff_mapThreadToCpu(7);
-        if(context.getReplicaIndex()==1)
-            ff_mapThreadToCpu(23);
-        if(context.getReplicaIndex()==2)
-            ff_mapThreadToCpu(39);
+        assert(pinning_context->cores.size() > context.getReplicaIndex());
+        ff_mapThreadToCpu(pinning_context->cores.at(context.getReplicaIndex()));
         // Call the barrier if set
-        if (this->has_pinning_barrier()) {
+        if (this->pinning_context->has_barrier) {
             /*if(context.getReplicaIndex()==0)
                 cout<< "map(0) è in attesa sulla barriera" << endl;
             if(context.getReplicaIndex()==1)
                 cout<< "map(1) è in attesa sulla barriera" << endl;
             if(context.getReplicaIndex()==2)
                 cout<< "map(2) è in attesa sulla barriera" << endl;*/
-            barrier->doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            pinning_context->barrier.doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
             /*if(context.getReplicaIndex()==0)
                 cout<< "map(0) ha superato la barriera" << endl;
             if(context.getReplicaIndex()==1)
@@ -265,11 +257,6 @@ public:
     }
 
 
-    bool has_pinning_barrier() {
-        return has_barrier;
-    }
-
-
     Map_Replica(Map_Replica &&) = delete; ///< Move constructor is deleted
     Map_Replica &operator=(const Map_Replica &) = delete; ///< Copy assignment operator is deleted
     Map_Replica &operator=(Map_Replica &&) = delete; ///< Move assignment operator is deleted
@@ -298,7 +285,7 @@ private:
     std::vector<Map_Replica<map_func_t>*> replicas; // vector of pointers to the replicas of the Map
     static constexpr op_type_t op_type = op_type_t::BASIC;
 
-    PinningSpinBarrier* barrier; // barrier required ONLY for the pinning of all replicas
+    pinning_thread_context* pinning_replicas_context = nullptr; // context for pinning of map replicas' thread
 
     // Configure the Map to receive batches instead of individual inputs
     void receiveBatches(bool _input_batching) override
@@ -434,16 +421,16 @@ public:
         std::string _name,
         Routing_Mode_t _input_routing_mode,
         size_t _outputBatchSize,
-        PinningSpinBarrier* _barrier,
+        pinning_thread_context* _pinning_replicas_context,
         std::function<void(RuntimeContext &)> _closing_func):
         Basic_Operator(_parallelism, _name, _input_routing_mode, _outputBatchSize),
         func(_func),
         key_extr(_key_extr),
-        barrier(_barrier)
+        pinning_replicas_context(_pinning_replicas_context)
     {
         bool copyOnWrite = (this->input_routing_mode == Routing_Mode_t::BROADCAST);
         for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Map
-            replicas.push_back(new Map_Replica<map_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _barrier,_closing_func, copyOnWrite));
+            replicas.push_back(new Map_Replica<map_func_t>(_func, this->name, RuntimeContext(this->parallelism, i), _pinning_replicas_context,_closing_func, copyOnWrite));
         }
     }
 
@@ -453,7 +440,7 @@ public:
         Basic_Operator(_other),
         func(_other.func)
 
-        , barrier(_other.barrier)
+        , pinning_replicas_context(_other.pinning_replicas_context)
         , key_extr(_other.key_extr)
 
     {

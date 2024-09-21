@@ -47,6 +47,7 @@
     #include<rapidjson/prettywriter.h>
 #endif
 
+
 namespace wf {
 
 //@cond DOXY_IGNORE
