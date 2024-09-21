@@ -70,6 +70,8 @@ private:
     Shipper<result_t> *shipper; // pointer to the shipper object used by the FlatMap replica to send outputs
     uint64_t empty_rounds; // number of "consecutive" flatmap executions without produced outputs
 
+    pinning_thread_context* pinning_context = nullptr;
+
 public:
     // Constructor
     FlatMap_Replica(flatmap_func_t _func,
@@ -81,11 +83,24 @@ public:
                     shipper(nullptr),
                     empty_rounds(0) {}
 
+    //Pinning Constructor
+    FlatMap_Replica(flatmap_func_t _func,
+                    std::string _opName,
+                    RuntimeContext _context,
+                    pinning_thread_context* _pinning_context,
+                    std::function<void(RuntimeContext &)> _closing_func):
+                    Basic_Replica(_opName, _context, _closing_func, false),
+                    func(_func),
+                    pinning_context(_pinning_context),
+                    shipper(nullptr),
+                    empty_rounds(0) {}
+
     // Copy Constructor
     FlatMap_Replica(const FlatMap_Replica &_other):
                     Basic_Replica(_other),
                     func(_other.func),
-                    empty_rounds(0)
+                    empty_rounds(0),
+                    pinning_context(_other.pinning_context)
     {
         if (_other.shipper != nullptr) {
             shipper = new Shipper<result_t>(*_other.shipper); // create a copy of the shipper
@@ -105,6 +120,31 @@ public:
         if (shipper != nullptr) {
             delete shipper;
         }
+    }
+
+    int svc_init() override {
+#ifdef MANUAL_PINNING
+        //pinning
+        assert(pinning_context->cores.size() > context.getReplicaIndex());
+        ff_mapThreadToCpu(pinning_context->cores.at(context.getReplicaIndex()));
+        // Call the barrier if set
+        if (this->pinning_context->has_barrier) {
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) è in attesa sulla barriera" << endl;*/
+            pinning_context->barrier.doBarrier(/*opName, context.getReplicaIndex()*/);  // Wait on the barrier
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) ha superato la barriera" << endl;*/
+        }
+#endif
+        return Basic_Replica::svc_init();
     }
 
     // svc (utilized by the FastFlow runtime)
@@ -224,6 +264,8 @@ private:
     std::vector<FlatMap_Replica<flatmap_func_t>*> replicas; // vector of pointers to the replicas of the FlatMap
     static constexpr op_type_t op_type = op_type_t::BASIC;
 
+    pinning_thread_context* pinning_replicas_context = nullptr; // context for pinning of source replicas' thread
+
     // Configure the FlatMap to receive batches instead of individual inputs
     void receiveBatches(bool _input_batching) override
     {
@@ -337,11 +379,41 @@ public:
         }
     }
 
+    /**
+     *  \brief Constructor
+     *
+     *  \param _func functional logic of the FlatMap (a function or any callable type)
+     *  \param _key_extr key extractor (a function or any callable type)
+     *  \param _parallelism internal parallelism of the FlatMap
+     *  \param _name name of the FlatMap
+     *  \param _input_routing_mode input routing mode of the FlatMap
+     *  \param _outputBatchSize size (in num of tuples) of the batches produced by this operator (0 for no batching)
+     *  \param _closing_func closing functional logic of the FlatMap (a function or any callable type)
+     */
+    FlatMap(flatmap_func_t _func,
+            keyextr_func_t _key_extr,
+            size_t _parallelism,
+            std::string _name,
+            Routing_Mode_t _input_routing_mode,
+            size_t _outputBatchSize,
+            pinning_thread_context* _pinning_replicas_context,
+            std::function<void(RuntimeContext &)> _closing_func):
+            Basic_Operator(_parallelism, _name, _input_routing_mode, _outputBatchSize),
+            func(_func),
+            key_extr(_key_extr),
+            pinning_replicas_context(_pinning_replicas_context)
+    {
+        for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the FlatMap
+            replicas.push_back(new FlatMap_Replica<flatmap_func_t>(_func, this->name, RuntimeContext(this->parallelism, i),  _pinning_replicas_context, _closing_func));
+        }
+    }
+
     /// Copy Constructor
     FlatMap(const FlatMap &_other):
             Basic_Operator(_other),
             func(_other.func),
-            key_extr(_other.key_extr)
+            key_extr(_other.key_extr),
+            pinning_replicas_context(_other.pinning_replicas_context)
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the FlatMap replicas
             replicas.push_back(new FlatMap_Replica<flatmap_func_t>(*(_other.replicas[i])));

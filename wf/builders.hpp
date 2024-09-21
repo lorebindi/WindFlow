@@ -520,6 +520,8 @@ private:
     Routing_Mode_t input_routing_mode = Routing_Mode_t::FORWARD; // routing mode of inputs to the FlatMap
     keyextr_func_t key_extr = [](const tuple_t &t) -> key_t { return key_t(); }; // key extractor
 
+    pinning_thread_context *pinning_context = nullptr;
+
 public:
     /** 
      *  \brief Constructor
@@ -528,6 +530,9 @@ public:
      */ 
     FlatMap_Builder(flatmap_func_t _func):
                     func(_func) {}
+
+    FlatMap_Builder(flatmap_func_t _func, pinning_thread_context* _pinning_context):
+                    func(_func), pinning_context(_pinning_context) {}
 
     /** 
      *  \brief Set the KEYBY routing mode of inputs to the FlatMap
@@ -563,6 +568,11 @@ public:
         new_builder.key_extr = _key_extr;
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
+
+        if(this->pinning_context != nullptr) {
+            new_builder.pinning_context = this->pinning_context;
+        }
+
         return new_builder;
     }
 
@@ -604,6 +614,16 @@ public:
      */ 
     auto build()
     {
+        if(this->pinning_context != nullptr) {
+            return flatmap_t(func,
+                         key_extr,
+                         this->parallelism,
+                         this->name,
+                         input_routing_mode,
+                         this->outputBatchSize,
+                         this->pinning_context,
+                         this->closing_func);
+        }
         return flatmap_t(func,
                          key_extr,
                          this->parallelism,
@@ -646,6 +666,8 @@ private:
     bool isKeyBySet = false; // true if a key extractor has been provided
     state_t initial_state; // initial state to be created one per key
 
+    pinning_thread_context *pinning_context = nullptr;
+
 public:
     /** 
      *  \brief Constructor
@@ -654,6 +676,9 @@ public:
      */ 
     Reduce_Builder(reduce_func_t _func):
                    func(_func) {}
+
+    Reduce_Builder(reduce_func_t _func, pinning_thread_context* _pinning_context):
+                   func(_func), pinning_context(_pinning_context) {}
 
     /** 
      *  \brief Set the KEYBY routing mode of inputs to the Reduce
@@ -685,6 +710,12 @@ public:
         new_builder.outputBatchSize = this->outputBatchSize;
         new_builder.closing_func = this->closing_func;
         new_builder.isKeyBySet = true;
+
+
+        if(this->pinning_context != nullptr) {
+            new_builder.pinning_context = this->pinning_context;
+        }
+
         return new_builder;
     }
 
@@ -711,6 +742,16 @@ public:
         if (!isKeyBySet && this->parallelism > 1) {
             std::cerr << RED << "WindFlow Error: Reduce with paralellism > 1 requires a key extractor" << DEFAULT_COLOR << std::endl;
             exit(EXIT_FAILURE);
+        }
+        if(this->pinning_context != nullptr) {
+            return reduce_t(func,
+                        key_extr,
+                        this->parallelism,
+                        this->name,
+                        this->outputBatchSize,
+                        this->pinning_context,
+                        this->closing_func,
+                        initial_state);
         }
         return reduce_t(func,
                         key_extr,

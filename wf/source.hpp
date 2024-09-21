@@ -99,9 +99,8 @@ public:
     Source_Replica(const Source_Replica &_other):
                    Basic_Replica(_other),
                    func(_other.func),
-                   time_policy(_other.time_policy)
-
-                   , pinning_context(_other.pinning_context)
+                   time_policy(_other.time_policy),
+                   pinning_context(_other.pinning_context)
 
     {
         if (_other.shipper != nullptr) {
@@ -139,7 +138,7 @@ public:
                 cout<< "source(1) è in attesa sulla barriera" << endl;
             if(context.getReplicaIndex()==2)
                 cout<< "source(2) è in attesa sulla barriera" << endl;*/
-            pinning_context->barrier.doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            pinning_context->barrier.doBarrier(/*opName, context.getReplicaIndex()*/);  // Wait on the barrier
             /*if(context.getReplicaIndex()==0)
                 cout<< "source(0) ha superato la barriera" << endl;
             if(context.getReplicaIndex()==1)
@@ -352,9 +351,8 @@ public:
     /// Copy constructor
     Source(const Source &_other):
            Basic_Operator(_other),
-           func(_other.func)
-
-           , pinning_replicas_context(_other.pinning_replicas_context)
+           func(_other.func),
+           pinning_replicas_context(_other.pinning_replicas_context)
 
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Source replicas

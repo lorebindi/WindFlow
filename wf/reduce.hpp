@@ -72,6 +72,8 @@ private:
     std::unordered_map<key_t, state_t> keyMap; // hashtable mapping key values onto the corresponding state objects
     state_t initial_state; // initial state to be copied for each new key
 
+    pinning_thread_context* pinning_context = nullptr;
+
 public:
     // Constructor
     Reduce_Replica(reduce_func_t _func,
@@ -85,13 +87,53 @@ public:
                    key_extr(_key_extr),
                    initial_state(_initial_state) {}
 
+    // Pinning Constructor
+    Reduce_Replica(reduce_func_t _func,
+                   keyextr_func_t _key_extr,
+                   std::string _opName,
+                   RuntimeContext _context,
+                   pinning_thread_context* _pinning_context,
+                   std::function<void(RuntimeContext &)> _closing_func,
+                   state_t _initial_state):
+                   Basic_Replica(_opName, _context, _closing_func, false),
+                   func(_func),
+                   pinning_context(_pinning_context),
+                   key_extr(_key_extr),
+                   initial_state(_initial_state) {}
+
     // Copy Constructor
     Reduce_Replica(const Reduce_Replica &_other):
                    Basic_Replica(_other),
                    func(_other.func),
                    key_extr(_other.key_extr),
                    keyMap(_other.keyMap),
-                   initial_state(_other.initial_state) {}
+                   initial_state(_other.initial_state),
+                   pinning_context(_other.pinning_context){}
+
+    int svc_init() override {
+#ifdef MANUAL_PINNING
+        //pinning
+        assert(pinning_context->cores.size() > context.getReplicaIndex());
+        ff_mapThreadToCpu(pinning_context->cores.at(context.getReplicaIndex()));
+        // Call the barrier if set
+        if (this->pinning_context->has_barrier) {
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) è in attesa sulla barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) è in attesa sulla barriera" << endl;*/
+            pinning_context->barrier.doBarrier(/*opName, context.getReplicaIndex()*/);  // Wait on the barrier
+            /*if(context.getReplicaIndex()==0)
+                cout<< "source(0) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==1)
+                cout<< "source(1) ha superato la barriera" << endl;
+            if(context.getReplicaIndex()==2)
+                cout<< "source(2) ha superato la barriera" << endl;*/
+        }
+#endif
+        return Basic_Replica::svc_init();
+    }
 
     // svc (utilized by the FastFlow runtime)
     void *svc(void *_in) override
@@ -185,6 +227,8 @@ private:
     using result_t = state_t;
     std::vector<Reduce_Replica<reduce_func_t, keyextr_func_t>*> replicas; // vector of pointers to the replicas of the Reduce
     static constexpr op_type_t op_type = op_type_t::BASIC;
+
+    pinning_thread_context* pinning_replicas_context = nullptr; // context for pinning of reduce replicas' thread
 
     // Configure the Reduce to receive batches instead of individual inputs
     void receiveBatches(bool _input_batching) override
@@ -296,11 +340,35 @@ public:
         }
     }
 
+    Reduce(reduce_func_t _func,
+           keyextr_func_t _key_extr,
+           size_t _parallelism,
+           std::string _name,
+           size_t _outputBatchSize,
+           pinning_thread_context* _pinning_replicas_context,
+           std::function<void(RuntimeContext &)> _closing_func,
+           state_t _initial_state):
+           Basic_Operator(_parallelism, _name, Routing_Mode_t::KEYBY, _outputBatchSize),
+           func(_func),
+           pinning_replicas_context(_pinning_replicas_context),
+           key_extr(_key_extr)
+    {
+        for (size_t i=0; i<this->parallelism; i++) { // create the internal replicas of the Reduce
+            replicas.push_back(new Reduce_Replica<reduce_func_t, keyextr_func_t>(_func,
+                                                                                       _key_extr,
+                                                                                       this->name,
+                                                                                       RuntimeContext(this->parallelism, i),_pinning_replicas_context,
+                                                                                       _closing_func,
+                                                                                       _initial_state));
+        }
+    }
+
     /// Copy Constructor
     Reduce(const Reduce &_other):
            Basic_Operator(_other),
            func(_other.func),
-           key_extr(_other.key_extr)
+           key_extr(_other.key_extr),
+           pinning_replicas_context(_other.pinning_replicas_context)
     {
         for (size_t i=0; i<this->parallelism; i++) { // deep copy of the pointers to the Reduce replicas
             replicas.push_back(new Reduce_Replica<reduce_func_t, keyextr_func_t>(*(_other.replicas[i])));

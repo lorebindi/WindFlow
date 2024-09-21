@@ -123,7 +123,7 @@ public:
                 cout<< "map(1) è in attesa sulla barriera" << endl;
             if(context.getReplicaIndex()==2)
                 cout<< "map(2) è in attesa sulla barriera" << endl;*/
-            pinning_context->barrier.doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            pinning_context->barrier.doBarrier(/*opName, context.getReplicaIndex()*/);  // Wait on the barrier
             /*if(context.getReplicaIndex()==0)
                 cout<< "map(0) ha superato la barriera" << endl;
             if(context.getReplicaIndex()==1)

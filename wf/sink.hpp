@@ -122,7 +122,7 @@ public:
                 cout<< "sink(1) è in attesa sulla barriera" << endl;
             if(context.getReplicaIndex()==2)
                 cout<< "sink(2) è in attesa sulla barriera" << endl;*/
-            this->pinning_context->barrier.doBarrier(opName, context.getReplicaIndex());  // Wait on the barrier
+            this->pinning_context->barrier.doBarrier(/*opName, context.getReplicaIndex()*/);  // Wait on the barrier
             /*if(context.getReplicaIndex()==0)
                 cout<< "sink(0) ha superato la barriera" << endl;
             if(context.getReplicaIndex()==1)
